@@ -14,6 +14,7 @@ import json
 import logging
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 from app.config import settings
@@ -50,7 +51,7 @@ def _init_db(con: sqlite3.Connection, overwrite: bool) -> None:
     if overwrite:
         con.executescript("""
             DROP TABLE IF EXISTS crew;
-            DROP TABLE IF EXISTS cast;
+            DROP TABLE IF EXISTS movie_cast;
             DROP TABLE IF EXISTS keywords;
             DROP TABLE IF EXISTS genres;
             DROP TABLE IF EXISTS movies;
@@ -67,7 +68,7 @@ def _load_credits(credits_path: Path) -> dict[str, dict]:
     Args:
         credits_path: Path to tmdb_5000_credits.csv.
     """
-    with open(credits_path) as f:
+    with open(credits_path, newline="") as f:
         return {row["movie_id"]: row for row in csv.DictReader(f)}
 
 
@@ -117,7 +118,7 @@ def _insert_movie(con: sqlite3.Connection, row: dict) -> int:
 
 
 def _insert_genres_and_keywords(
-    con: sqlite3.Connection, movie_id: int, row: dict
+    con: sqlite3.Connection, movie_id: int, row: dict, replace: bool = True
 ) -> None:
     """Insert genre and keyword rows for a movie.
 
@@ -125,7 +126,14 @@ def _insert_genres_and_keywords(
         con: Open SQLite connection.
         movie_id: The movie's integer id.
         row: Raw CSV row dict containing JSON-encoded genres and keywords columns.
+        replace: If True, delete this movie's existing rows first so re-ingesting
+            stays idempotent. Skipped on a clean (overwrite) load, where the
+            tables start empty and the deletes are pure no-ops.
     """
+    if replace:
+        con.execute("DELETE FROM genres WHERE movie_id = ?", (movie_id,))
+        con.execute("DELETE FROM keywords WHERE movie_id = ?", (movie_id,))
+
     for genre in json.loads(row["genres"] or "[]"):
         con.execute(
             "INSERT INTO genres (movie_id, name) VALUES (?,?)",
@@ -139,7 +147,9 @@ def _insert_genres_and_keywords(
         )
 
 
-def _insert_cast_and_crew(con: sqlite3.Connection, movie_id: int, credit: dict) -> None:
+def _insert_cast_and_crew(
+    con: sqlite3.Connection, movie_id: int, credit: dict, replace: bool = True
+) -> None:
     """Insert cast and crew rows for a movie.
 
     Args:
@@ -147,10 +157,17 @@ def _insert_cast_and_crew(con: sqlite3.Connection, movie_id: int, credit: dict) 
         movie_id: The movie's integer id.
         credit: Raw credits CSV row dict for this movie, or an empty dict if
             no credits were found.
+        replace: If True, delete this movie's existing rows first so re-ingesting
+            stays idempotent. Skipped on a clean (overwrite) load, where the
+            tables start empty and the deletes are pure no-ops.
     """
+    if replace:
+        con.execute("DELETE FROM movie_cast WHERE movie_id = ?", (movie_id,))
+        con.execute("DELETE FROM crew WHERE movie_id = ?", (movie_id,))
+
     for i, cast_member in enumerate(json.loads(credit.get("cast", "[]"))):
         con.execute(
-            "INSERT INTO cast (movie_id, name, character, cast_order) VALUES (?,?,?,?)",
+            "INSERT INTO movie_cast (movie_id, name, character, cast_order) VALUES (?,?,?,?)",
             (movie_id, cast_member["name"], cast_member.get("character"), i),
         )
 
@@ -176,31 +193,48 @@ def ingest(
         db_path: Destination SQLite database file (created if absent).
         overwrite: Drop and recreate all tables before ingesting.
     """
-    con = sqlite3.connect(db_path)
-    _init_db(con, overwrite)
-
-    credits = _load_credits(credits_path)
-
     start = time.monotonic()
     movie_count = 0
 
-    with open(movies_path) as f:
-        for row in csv.DictReader(f):
-            try:
-                movie_id = _insert_movie(con, row)
-                _insert_genres_and_keywords(con, movie_id, row)
-                _insert_cast_and_crew(con, movie_id, credits.get(str(movie_id), {}))
-                movie_count += 1
-            except Exception as e:
-                log.warning(
-                    "Skipping movie %r (ID %s): %s",
-                    row.get("title"),
-                    row.get("id"),
-                    e,
-                )
+    # isolation_level=None puts the driver in autocommit mode so we manage the
+    # transaction explicitly: the entire load runs inside a single transaction,
+    # with a per-movie savepoint nested inside it for
+    # cheap, in-memory rollback of any malformed row.
+    with closing(sqlite3.connect(db_path, isolation_level=None)) as con:
+        _init_db(con, overwrite)
+        # Enforce foreign keys for the load phase only. Doing this before
+        # _init_db would make dropping the parent `movies` table fail while
+        # child tables still reference it.
+        con.execute("PRAGMA foreign_keys = ON")
 
-    con.commit()
-    con.close()
+        credits = _load_credits(credits_path)
+
+        # On a clean overwrite the tables are empty, so the per-movie
+        # delete-before-insert is redundant and can be skipped.
+        replace = not overwrite
+
+        con.execute("BEGIN")
+        with open(movies_path, newline="") as f:
+            for row in csv.DictReader(f):
+                con.execute("SAVEPOINT movie")
+                try:
+                    movie_id = _insert_movie(con, row)
+                    _insert_genres_and_keywords(con, movie_id, row, replace)
+                    _insert_cast_and_crew(
+                        con, movie_id, credits.get(str(movie_id), {}), replace
+                    )
+                    con.execute("RELEASE movie")
+                    movie_count += 1
+                except Exception as e:
+                    con.execute("ROLLBACK TO movie")
+                    con.execute("RELEASE movie")
+                    log.warning(
+                        "Skipping movie %r (ID %s): %s",
+                        row.get("title"),
+                        row.get("id"),
+                        e,
+                    )
+        con.execute("COMMIT")
 
     log.info(
         "Ingested %d movies into %s in %.1fs",

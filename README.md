@@ -5,7 +5,7 @@ This project uses **uv** for package management. To install uv:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
-If you prefer to use a different package manager, a `requirements.txt` has also been provided.
+If you prefer to use a different package manager, a `requirements.txt` and `requirements_dev.txt` have also been provided.
 
 ## Data Ingestion
 
