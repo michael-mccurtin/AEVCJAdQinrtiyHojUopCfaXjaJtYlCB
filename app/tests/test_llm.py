@@ -76,7 +76,7 @@ class FakeLLMClient:
         self.generate_sql_called = True
         return GeneratedSQL(sql=self._sql).sql
 
-    def generate_response(self, query, results, history=None):
+    def generate_response(self, query, results, history=None, total=None):
         return f"Found {len(results)} result(s)."
 
 

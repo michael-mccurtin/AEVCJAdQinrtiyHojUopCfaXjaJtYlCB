@@ -5,7 +5,13 @@ from contextlib import closing
 
 import pytest
 
-from app.db.db import MAX_ROWS, _ensure_limit, execute_query, get_connection
+from app.db.db import (
+    MAX_ROWS,
+    _ensure_limit,
+    count_rows,
+    execute_query,
+    get_connection,
+)
 
 
 @pytest.fixture
@@ -64,3 +70,13 @@ def test_execute_query_caps_unbounded_results(db):
     """A SELECT with no LIMIT is bounded to MAX_ROWS, not the full 60 rows."""
     rows = execute_query("SELECT id FROM movies", db_path=db)
     assert len(rows) == MAX_ROWS
+
+
+def test_count_rows_ignores_limit(db):
+    """count_rows reports the full match count regardless of a LIMIT clause."""
+    assert count_rows("SELECT id FROM movies LIMIT 10", db_path=db) == 60
+    assert count_rows("SELECT id FROM movies", db_path=db) == 60
+
+
+def test_count_rows_respects_where(db):
+    assert count_rows("SELECT id FROM movies WHERE id <= 5 LIMIT 2", db_path=db) == 5

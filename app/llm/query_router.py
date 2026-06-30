@@ -5,7 +5,7 @@ from enum import Enum
 from openai import APIError
 from pydantic import BaseModel, ValidationError
 
-from app.db.db import execute_query
+from app.db.db import count_rows, execute_query
 from app.llm.client import LLMClient, LLMError
 
 log = logging.getLogger(__name__)
@@ -86,12 +86,20 @@ def route_query(
             return RouteResult(reply=REJECTION_MESSAGE, outcome=Outcome.REJECTED)
 
         sql = client.generate_sql(query, history)
-        log.debug("Generated SQL: %s", sql)
+        # Collapse whitespace so the whole query stays on one log line (the model often returns it multi-line).
+        log.info("Generated SQL: %s", " ".join(sql.split()))
 
         results = execute_query(sql)
         log.info("Query returned %d results", len(results))
 
-        reply = client.generate_response(query, results, history)
+        # Count total matching rows ignoring LIMIT, so the response stage can disclose
+        # a partial list ("showing 10 of 27") instead of implying it is complete.
+        # Guarded: a count failure must not discard an otherwise good result.
+        try:
+            total = count_rows(sql)
+        except sqlite3.Error:
+            total = len(results)
+        reply = client.generate_response(query, results, history, total=total)
         return RouteResult(reply=reply, outcome=Outcome.OK)
     except (APIError, LLMError) as e:
         # Network/rate-limit/API failures, or a model refusal/empty completion.

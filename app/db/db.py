@@ -45,3 +45,18 @@ def execute_query(sql: str, db_path: Path | None = None) -> list[dict]:
         except sqlite3.Error as e:
             log.error("SQL execution failed: %s\nQuery: %s", e, sql)
             raise
+
+
+def count_rows(sql: str, db_path: Path | None = None) -> int:
+    """Count the rows the query would return with no LIMIT/OFFSET.
+
+    Lets the caller detect truncation (e.g. "showing 10 of 27") by comparing
+    this total against the limited result set. The query is wrapped as a
+    subquery so it works for arbitrary SELECTs, including DISTINCT and JOINs.
+    """
+    stripped = sql.strip().rstrip(";").strip()
+    unlimited = re.sub(
+        r"\s+limit\s+\d+(\s+offset\s+\d+)?\s*$", "", stripped, flags=re.IGNORECASE
+    )
+    with closing(get_connection(db_path)) as con:
+        return con.execute(f"SELECT COUNT(*) FROM ({unlimited})").fetchone()[0]

@@ -105,7 +105,11 @@ class LLMClient:
         ).sql
 
     def generate_response(
-        self, query: str, results: list[dict], history: list[dict] | None = None
+        self,
+        query: str,
+        results: list[dict],
+        history: list[dict] | None = None,
+        total: int | None = None,
     ) -> str:
         """Turn SQL query results into a grounded, conversational reply.
 
@@ -113,12 +117,26 @@ class LLMClient:
             query: The user's question.
             results: Rows from execute_query, serialised as JSON context.
             history: Prior turns, for conversational continuity.
+            total: Total number of matching rows (ignoring LIMIT). When it
+                exceeds the rows shown, the reply discloses that this is a
+                partial list rather than implying it is exhaustive.
 
         Raises:
             openai.APIError: on a network, rate-limit, or API failure.
         """
-        context = json.dumps(results, indent=2)
-        user_content = f"Question: {query}\n\nData:\n{context}"
+        # Drop internal movie IDs so they don't leak into the user-facing reply.
+        # (id stays in the SQL SELECT because it keeps DISTINCT correct for
+        # same-titled films; it just isn't shown to the model here.)
+        visible = [{k: v for k, v in row.items() if k != "id"} for row in results]
+        context = json.dumps(visible, indent=2)
+        note = ""
+        if total is not None and total > len(results):
+            note = (
+                f"\n\nNote: {total} movies match this query, but only the first "
+                f"{len(results)} are shown. Tell the user the total ({total}) and "
+                "that this is a partial list they can ask to see in full or narrow down."
+            )
+        user_content = f"Question: {query}\n\nData:\n{context}{note}"
         messages = self._build_messages(
             RESPONSE_GENERATOR_SYSTEM_PROMPT, user_content, history
         )
