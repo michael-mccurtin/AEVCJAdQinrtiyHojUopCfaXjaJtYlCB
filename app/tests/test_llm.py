@@ -90,24 +90,27 @@ def test_reject_short_circuits_before_sql():
 
     result = query_router.route_query("what is the capital of France?", client=client)
 
-    assert result == query_router.REJECTION_MESSAGE
+    assert result.reply == query_router.REJECTION_MESSAGE
+    assert result.outcome == query_router.Outcome.REJECTED
     assert client.generate_sql_called is False
 
 
 def test_llm_failure_returns_friendly_message():
-    """An upstream LLM error is caught and turned into a graceful message."""
+    """An upstream LLM error is caught and reported as an LLM_ERROR outcome."""
     client = FakeLLMClient(classify_error=_api_error())
 
     result = query_router.route_query("anything", client=client)
 
-    assert result == query_router.LLM_ERROR_MESSAGE
+    assert result.reply == query_router.LLM_ERROR_MESSAGE
+    assert result.outcome == query_router.Outcome.LLM_ERROR
 
 
 def test_invalid_generated_sql_returns_friendly_message():
     """If the model emits a non-SELECT, the validator raises, resulting in
-    graceful degradation rather than crashing."""
+    graceful degradation (a LOOKUP_ERROR outcome) rather than crashing."""
     client = FakeLLMClient(intent="sql", sql="DROP TABLE movies")
 
     result = query_router.route_query("delete everything", client=client)
 
-    assert result == query_router.LOOKUP_ERROR_MESSAGE
+    assert result.reply == query_router.LOOKUP_ERROR_MESSAGE
+    assert result.outcome == query_router.Outcome.LOOKUP_ERROR

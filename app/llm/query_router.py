@@ -1,8 +1,9 @@
 import logging
 import sqlite3
+from enum import Enum
 
 from openai import APIError
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.db.db import execute_query
 from app.llm.client import LLMClient, LLMError
@@ -16,6 +17,28 @@ LLM_ERROR_MESSAGE = "I'm having trouble reaching my reasoning engine right now. 
 LOOKUP_ERROR_MESSAGE = (
     "I couldn't look that information up. Could you try rephrasing your question?"
 )
+
+
+class Outcome(str, Enum):
+    """How a query was resolved.
+
+    OK and REJECTED are successful resolutions (the pipeline did its job);
+    LLM_ERROR and LOOKUP_ERROR are failures. The HTTP layer maps the failure
+    outcomes to 5xx while still returning the friendly reply in the body.
+    """
+
+    OK = "ok"
+    REJECTED = "rejected"
+    LLM_ERROR = "llm_error"
+    LOOKUP_ERROR = "lookup_error"
+
+
+class RouteResult(BaseModel):
+    """A user-facing reply paired with the outcome that produced it."""
+
+    reply: str
+    outcome: Outcome
+
 
 # Lazily-instantiated default client. Importing this module (e.g. in tests or
 # at app startup) will not require an API key or open a network client.
@@ -34,18 +57,19 @@ def route_query(
     query: str,
     history: list[dict] | None = None,
     client: LLMClient | None = None,
-) -> str:
-    """Classify a query, retrieve relevant data, and return a conversational response.
+) -> RouteResult:
+    """Classify a query, retrieve relevant data, and return a conversational reply.
+
+    Never raises: each failure is caught and returned as a `RouteResult` with a
+    failure `Outcome`, so the caller decides how to surface it (the API maps the
+    outcome to an HTTP status). Off-topic and empty-result queries are normal
+    successful outcomes, not failures.
 
     Args:
         query: The user's natural language question.
         history: Prior conversation turns as a list of role/content dicts.
         client: LLM client to use. Defaults to the shared lazy singleton;
             injectable so tests can supply a fake without a live API key.
-
-    Returns:
-        A conversational response string, or a friendly fallback message if the
-        query is off-topic or a stage of the pipeline fails.
     """
     client = client or get_client()
 
@@ -59,7 +83,7 @@ def route_query(
         )
 
         if classification.intent == "reject":
-            return REJECTION_MESSAGE
+            return RouteResult(reply=REJECTION_MESSAGE, outcome=Outcome.REJECTED)
 
         sql = client.generate_sql(query, history)
         log.debug("Generated SQL: %s", sql)
@@ -67,16 +91,17 @@ def route_query(
         results = execute_query(sql)
         log.info("Query returned %d results", len(results))
 
-        return client.generate_response(query, results, history)
+        reply = client.generate_response(query, results, history)
+        return RouteResult(reply=reply, outcome=Outcome.OK)
     except (APIError, LLMError) as e:
         # Network/rate-limit/API failures, or a model refusal/empty completion.
         log.error("LLM call failed: %s", e)
-        return LLM_ERROR_MESSAGE
+        return RouteResult(reply=LLM_ERROR_MESSAGE, outcome=Outcome.LLM_ERROR)
     except (sqlite3.Error, ValidationError) as e:
         # A valid-but-wrong SELECT, or model output that failed SQL validation.
         log.error("Query handling failed: %s", e)
-        return LOOKUP_ERROR_MESSAGE
+        return RouteResult(reply=LOOKUP_ERROR_MESSAGE, outcome=Outcome.LOOKUP_ERROR)
     except Exception:
         # Catch-all so the API never surfaces an unhandled 500 to the user.
         log.exception("Unexpected error handling query: %s", query)
-        return LOOKUP_ERROR_MESSAGE
+        return RouteResult(reply=LOOKUP_ERROR_MESSAGE, outcome=Outcome.LOOKUP_ERROR)
