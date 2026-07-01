@@ -74,7 +74,7 @@ def render_source(turn: dict) -> None:
         else:
             st.caption(f"{len(rows)} row(s) retrieved")
         if rows:
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def render_turn(turn: dict) -> None:
