@@ -1,0 +1,8 @@
+.env
+.venv
+data/movies.db
+.git
+.gitignore
+.pytest_cache
+__pycache__
+*.pyc

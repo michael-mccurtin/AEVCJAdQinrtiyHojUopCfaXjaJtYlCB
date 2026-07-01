@@ -67,6 +67,11 @@ class LLMClient:
 
     def __init__(self) -> None:
         """Construct the client. Requires settings.openai_api_key to be set."""
+        if not settings.openai_api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set. It is required to use the LLM features "
+                "(the ingest script does not need it)."
+            )
         self._client = OpenAI(api_key=settings.openai_api_key)
         self._model = settings.llm_chat_model
 

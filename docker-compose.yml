@@ -1,0 +1,56 @@
+# Ingest the DB into a shared volume, then run the API and
+# the Streamlit frontend, wired to talk to each other.
+#
+#   OPENAI_API_KEY must be set (in a .env file next to this compose file).
+#   Bring it up with:  docker compose up --build
+#   Then open the UI:  http://localhost:8501   (API docs: http://localhost:8000/docs)
+
+# Sets the Compose project name, replacing the working-dir default. This
+# prefixes container/network/volume names (e.g. movie-assistant-api).
+name: movie-assistant
+
+services:
+  # One-shot run: build data/movies.db from the TMDB CSVs into the shared volume,
+  # then exit. Needs no API key. api waits for this to finish successfully.
+  #
+  # All three services run the same code from one image, so we build it once
+  # here (tagged movie-assistant:latest) and the others just reference it.
+  ingest:
+    build: .
+    image: movie-assistant:latest
+    container_name: movie-assistant-ingest
+    command: python -m app.ingest --db /data/movies.db
+    volumes:
+      - moviedata:/data
+
+  api:
+    image: movie-assistant:latest
+    container_name: movie-assistant-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DB_PATH: /data/movies.db
+    env_file:
+      - .env # supplies OPENAI_API_KEY
+    ports:
+      - "8000:8000"
+    volumes:
+      - moviedata:/data
+    depends_on:
+      ingest:
+        condition: service_completed_successfully
+
+  frontend:
+    image: movie-assistant:latest
+    container_name: movie-assistant-frontend
+    command: >
+      streamlit run app/frontend.py
+      --server.address 0.0.0.0 --server.port 8501 --server.headless true
+    environment:
+      MOVIE_API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
+volumes:
+  moviedata:
