@@ -43,10 +43,11 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """The assistant's conversational reply plus a machine-readable outcome.
+    """The assistant's reply, a machine-readable outcome, and the retrieval behind it.
 
     The HTTP status conveys the coarse signal (200 vs 5xx); `outcome` gives the
-    finer-grained reason for client interpretation.
+    finer-grained reason for client interpretation; `sql`/`results`/`total` expose
+    the structured retrieval so a client can show the answer's source.
     """
 
     reply: str = Field(
@@ -58,4 +59,16 @@ class ChatResponse(BaseModel):
         ...,
         description="How the query resolved: ok, rejected, llm_error, or lookup_error.",
         examples=[Outcome.OK],
+    )
+    sql: str | None = Field(
+        default=None,
+        description="The SQL the assistant ran, if any (null for off-topic/failed queries).",
+    )
+    results: list[dict] = Field(
+        default_factory=list,
+        description="The rows retrieved and used to ground the reply.",
+    )
+    total: int | None = Field(
+        default=None,
+        description="Total rows matching the query ignoring LIMIT, when known.",
     )

@@ -37,6 +37,9 @@ def test_chat_returns_reply(client):
     assert response.json() == {
         "reply": "reply to: Tell me about Inception (history=0)",
         "outcome": "ok",
+        "sql": None,
+        "results": [],
+        "total": None,
     }
 
 
@@ -82,4 +85,10 @@ def test_chat_llm_failure_maps_to_503():
         app.dependency_overrides.clear()
 
     assert response.status_code == 503
-    assert response.json() == {"reply": "upstream is down", "outcome": "llm_error"}
+    assert response.json() == {
+        "reply": "upstream is down",
+        "outcome": "llm_error",
+        "sql": None,
+        "results": [],
+        "total": None,
+    }

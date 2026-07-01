@@ -34,10 +34,18 @@ class Outcome(str, Enum):
 
 
 class RouteResult(BaseModel):
-    """A user-facing reply paired with the outcome that produced it."""
+    """A user-facing reply plus the retrieval that produced it.
+
+    sql and results expose the structured-retrieval step for transparency (the
+    frontend shows them as the answer's source); both are empty for off-topic or
+    failed queries that never reached the database.
+    """
 
     reply: str
     outcome: Outcome
+    sql: str | None = None
+    results: list[dict] = []
+    total: int | None = None  # total matching rows ignoring LIMIT (for "10 of 27")
 
 
 # Lazily-instantiated default client. Importing this module (e.g. in tests or
@@ -100,7 +108,9 @@ def route_query(
         except sqlite3.Error:
             total = len(results)
         reply = client.generate_response(query, results, history, total=total)
-        return RouteResult(reply=reply, outcome=Outcome.OK)
+        return RouteResult(
+            reply=reply, outcome=Outcome.OK, sql=sql, results=results, total=total
+        )
     except (APIError, LLMError) as e:
         # Network/rate-limit/API failures, or a model refusal/empty completion.
         log.error("LLM call failed: %s", e)

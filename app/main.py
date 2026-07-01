@@ -79,12 +79,20 @@ def health() -> dict[str, str]:
     summary="Answer a movie question",
     responses={
         200: {
-            "description": "A movie answer, or a reply declining an off-topic question.",
+            "description": "A movie answer, or a reply declining an off-topic question. "
+            "sql and results expose the retrieval behind the answer.",
             "content": {
                 "application/json": {
                     "example": {
                         "reply": '"Pulp Fiction" was directed by Quentin Tarantino.',
                         "outcome": Outcome.OK.value,
+                        "sql": "SELECT movies.id, movies.title, crew.name FROM movies "
+                        "JOIN crew ON movies.id = crew.movie_id WHERE movies.title = "
+                        "'Pulp Fiction' AND crew.job = 'Director'",
+                        "results": [
+                            {"id": 680, "title": "Pulp Fiction", "name": "Quentin Tarantino"}
+                        ],
+                        "total": 1,
                     }
                 }
             },
@@ -92,12 +100,15 @@ def health() -> dict[str, str]:
         503: {
             "model": ChatResponse,
             "description": "The LLM service is unavailable. The body carries a "
-            "friendly retry message.",
+            "friendly retry message; the retrieval fields are empty.",
             "content": {
                 "application/json": {
                     "example": {
                         "reply": LLM_ERROR_MESSAGE,
                         "outcome": Outcome.LLM_ERROR.value,
+                        "sql": None,
+                        "results": [],
+                        "total": None,
                     }
                 }
             },
@@ -105,12 +116,15 @@ def health() -> dict[str, str]:
         500: {
             "model": ChatResponse,
             "description": "The query could not be processed. The body carries a "
-            "friendly fallback message.",
+            "friendly fallback message; the retrieval fields are empty.",
             "content": {
                 "application/json": {
                     "example": {
                         "reply": LOOKUP_ERROR_MESSAGE,
                         "outcome": Outcome.LOOKUP_ERROR.value,
+                        "sql": None,
+                        "results": [],
+                        "total": None,
                     }
                 }
             },
@@ -130,4 +144,10 @@ def chat(
     history = [turn.model_dump() for turn in request.history]
     result = router(request.message, history)
     response.status_code = STATUS_BY_OUTCOME[result.outcome]
-    return ChatResponse(reply=result.reply, outcome=result.outcome)
+    return ChatResponse(
+        reply=result.reply,
+        outcome=result.outcome,
+        sql=result.sql,
+        results=result.results,
+        total=result.total,
+    )
