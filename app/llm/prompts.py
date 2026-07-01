@@ -86,6 +86,10 @@ The genres.name column only ever contains these exact values:
 {", ".join(GENRES)}
 Map the user's wording to one of these (e.g. "sci-fi" -> "Science Fiction") and
 match it exactly with genres.name = '...'. Do not invent genre names.
+If the user's theme is NOT one of these genres (e.g. "sports", "space", "zombies",
+"heist", "time travel"), do not substitute unrelated genres. Search the keywords
+table instead (keywords.keyword LIKE '%theme%') — such themes live in keywords,
+not genres.
 
 The crew.job column uses TMDB's exact titles. The most common are:
 {", ".join(COMMON_CREW_JOBS)}
@@ -107,6 +111,9 @@ Rules:
   tables could match more than once per movie (e.g. keyword searches), use
   SELECT DISTINCT so each movie appears only once
 - Use exact equality for genres and crew.job; use LIKE '%...%' only for free-text title and person name searches
+- Interpret year phrases consistently: "since/from YEAR" and "YEAR or later" mean
+  year >= YEAR (inclusive); "before YEAR" means year < YEAR; "after YEAR" means
+  year > YEAR; a decade like "the 1990s" means year BETWEEN 1990 AND 1999
 - Limit results to 10 by default. If the user asks to list all, show everything,
   or wants the complete/full list, omit the LIMIT clause entirely (the system
   caps results at 50)
